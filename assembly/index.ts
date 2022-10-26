@@ -1,5 +1,10 @@
 import "./setup";
 import { copy, ht_clear, ht_delete, ht_get, ht_set } from "./ht";
+import { EqualsRule, EveryRule } from "byte-parse-as/assembly";
+
+let SET_ENTRY = new EqualsRule(1);
+let THREE_SET_ENTRIES = new EveryRule([SET_ENTRY, SET_ENTRY, SET_ENTRY]);
+SET_ENTRY.test()
 
 const enum ErrCode {
     Ok = 0,
@@ -55,6 +60,11 @@ export function _start(): void {
     let child_process_id = <u64>0;
     let child_process_spawned = false;
 
+    let path_ptr = <usize>0;
+    let path_len = <usize>0;
+
+    // load file, and iterate over contents
+
     while (true) {
         // receive the message in the scratch area
         let message_result = receive(0, 0, 0);
@@ -70,7 +80,8 @@ export function _start(): void {
                 let msg_ptr = heap.alloc(<usize>msg_len);
 
                 // load the message manually
-                assert(read_data(msg_ptr, msg_len) == ErrCode.Ok);
+                let read_result = read_data(msg_ptr, msg_len);
+                assert(read_result == ErrCode.Ok);
 
                 // potentially allocate a receipt for a process and a node
                 let receipt_ptr = <usize>0;
@@ -80,12 +91,12 @@ export function _start(): void {
                 let receipt_node_id = <u64>0;
 
                 // load the first byte to get the msg type
-                let msg_type = load<u8>(msg_ptr);
-                let msg_base = msg_type & 0xF0;
+                let msg_base = load<u8>(msg_ptr);
+                let msg_type = msg_base & 0xF0;
                 let msg_distributed = msg_type & FLAG_DISTRIBUTED;
                 let msg_receipt = msg_type & FLAG_RECEIPT;
 
-                // we need to keep track 
+                // we need to keep track of where the cursor should be
                 let raw_start = <usize>0;
                 let raw_rest = <usize>0;
 
@@ -117,9 +128,13 @@ export function _start(): void {
                         ht_clear();
 
                         // the receipt is a single byte [0x00]
-                        receipt_ptr = heap.alloc(1);
-                        receipt_len = 1; // receipt length is exactly 1
-                        store<u8>(receipt_ptr, 0); // The value is 0
+                        if (msg_distributed | msg_receipt) {
+                            receipt_ptr = heap.alloc(1);
+                            receipt_len = 1; // receipt length is exactly 1
+                            store<u8>(receipt_ptr, 0); // The value is 0
+                        }
+
+                        // TODO: send clear command to file process
                         break;
                     }
 
@@ -130,7 +145,7 @@ export function _start(): void {
 
                         // perform ht_get
                         assert(raw_rest >= 8 + payload_length);
-                        let entry = ht_get(raw_rest + 8, payload_length);
+                        let entry = ht_get(raw_start + 8, payload_length);
 
                         // if there is an entry
                         if (entry) {
@@ -160,7 +175,7 @@ export function _start(): void {
                         let key_start = raw_start + 8;
 
                         // then get the value
-                        assert(raw_rest >= 8 + 8 + key_length);
+                        assert(raw_rest >= 16 + key_length);
                         let value_length = <usize>load<u64>(raw_rest + key_length, 8);
                         let value_start = raw_rest + 16 + key_length;
 
@@ -174,6 +189,8 @@ export function _start(): void {
                             store<u8>(receipt_ptr, 0);
                         }
 
+                        // TODO: Send set instruction to file process
+
                         break;
                     }
 
@@ -184,21 +201,34 @@ export function _start(): void {
 
                         // perform ht_del
                         assert(raw_rest >= 8 + payload_length);
-                        let success = !ht_delete(raw_rest + 8, payload_length);
+                        let failed = !ht_delete(raw_rest + 8, payload_length);
 
                         // return a receipt if requested
                         if (msg_distributed | msg_receipt) {
                             receipt_ptr = heap.alloc(1);
                             receipt_len = 1;
-                            store<u8>(receipt_ptr, u8(success));
+                            store<u8>(receipt_ptr, u8(failed));
                         }
 
                         break;
                     }
 
                     case INSTRUCTION_TYPE_CONFIGURE_PERSISTENCE: {
+                        // first collect the persist period
+                        assert(raw_rest >= 8);
+                        let persist_period = load<u64>(raw_start);
 
+                        // get the path length
+                        assert(raw_rest >= 16)
+                        path_len = <usize>load<u64>(raw_start, 8); // 8 bytes in
+
+                        // finally get the path
+                        assert(raw_rest >= 16 + path_len);
+                        path_ptr = copy(raw_start + 16, path_len);
+
+                        // TODO: send file location to file process
                     }
+
                     
                 }
 

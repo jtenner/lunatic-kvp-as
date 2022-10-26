@@ -105,7 +105,7 @@ function ht_set_entry(key: usize, key_len: usize, value: usize, value_len: usize
     let entry = changetype<HTEntry>(entries + target_index * offsetof<HTEntry>());
     
     if (i32(entry.key == 0) | i32(entry.free)) {
-      // free spot and fast path!
+      // free spot, slow path
       // The key hasn't been set yet, or it's already free, which means the memory is free
 
       let key_copy = copy(key, key_len);
@@ -123,8 +123,8 @@ function ht_set_entry(key: usize, key_len: usize, value: usize, value_len: usize
       return entry;
 
     } else if (entry.key != 0 && strings_equal(entry.key, entry.key_len, key, key_len)) {
-      // we know the entry is not free, and we also know the keys are equal 
-      // need to perform some memory management
+      // we know the entry is not free, but the keys are equal 
+      // only need to copy the value
 
       let entry_value = entry.value;
 
